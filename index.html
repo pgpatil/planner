@@ -528,6 +528,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--t1);height:
 .fab{display:none;position:fixed;bottom:calc(var(--bot) + 14px + env(safe-area-inset-bottom));right:16px;width:52px;height:52px;background:var(--acc);border-radius:50%;box-shadow:0 4px 16px rgba(79,70,229,.4);align-items:center;justify-content:center;font-size:24px;color:#fff;cursor:pointer;z-index:90;border:none;font-family:'Inter',sans-serif;}
 .fab:active{transform:scale(.95);}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -796,16 +797,24 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--t1);height:
           <button class="ftab active" onclick="setTmF('all',this)">All</button>
           <button class="ftab" onclick="setTmF('dept',this)">By Dept</button>
         </div>
-        <button class="btn bp btn-sm" onclick="openPersonModal()">+ Person</button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn bg btn-sm" onclick="downloadTemplate('people')" title="Download Excel template">📥 Template</button>
+          <button class="btn bg btn-sm" onclick="triggerXlsxUpload('people')" title="Upload Excel file">📤 Import Excel</button>
+          <button class="btn bp btn-sm" onclick="openPersonModal()">+ Person</button>
+        </div>
       </div>
       <div id="teamGrid" class="people-grid"></div>
     </div>
 
     <!-- DEPARTMENTS -->
     <div class="view" id="view-departments">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;flex-wrap:wrap">
         <div style="font-size:13px;color:var(--t3)">Manage departments</div>
-        <button class="btn bp btn-sm" onclick="openDeptModal()">+ Dept</button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn bg btn-sm" onclick="downloadTemplate('departments')" title="Download Excel template">📥 Template</button>
+          <button class="btn bg btn-sm" onclick="triggerXlsxUpload('departments')" title="Upload Excel file">📤 Import Excel</button>
+          <button class="btn bp btn-sm" onclick="openDeptModal()">+ Dept</button>
+        </div>
       </div>
       <div id="deptList"></div>
     </div>
@@ -820,7 +829,11 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--t1);height:
           <button class="ftab" onclick="setCustFilter('lead',this)">Leads</button>
           <button class="ftab" onclick="setCustFilter('inactive',this)">Inactive</button>
         </div>
-        <button class="btn bp btn-sm" onclick="openCustModal()">+ Customer</button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn bg btn-sm" onclick="downloadTemplate('customers')" title="Download Excel template">📥 Template</button>
+          <button class="btn bg btn-sm" onclick="triggerXlsxUpload('customers')" title="Upload Excel file">📤 Import Excel</button>
+          <button class="btn bp btn-sm" onclick="openCustModal()">+ Customer</button>
+        </div>
       </div>
       <div class="cust-layout">
         <div class="cust-list-panel">
@@ -1657,6 +1670,176 @@ function renderAnalytics(){
 }
 
 
+
+// ══ EXCEL IMPORT / EXPORT ══
+let _xlsxTarget=null; // 'departments' | 'people' | 'customers'
+let _xlsxParsed=null; // parsed rows ready to import
+
+// ── Templates definition ──
+const TEMPLATES={
+  departments:{
+    cols:['Department Name'],
+    sample:[['Engineering'],['Finance'],['HR'],['Marketing'],['Operations']],
+    filename:'PlanCore_Departments_Template.xlsx'
+  },
+  people:{
+    cols:['Full Name','Initials','Role','Department'],
+    sample:[['Jane Smith','JS','Product Manager','Engineering'],['John Doe','JD','Developer','Engineering']],
+    filename:'PlanCore_People_Template.xlsx'
+  },
+  customers:{
+    cols:['Company Name','Status','Industry','Contact Person','Email','Phone','Notes'],
+    sample:[['Acme Corp','active','Finance','John Smith','john@acme.com','+1 234 567 890','Key account'],['Beta Ltd','lead','Tech','Sara Lee','sara@beta.com','','New prospect']],
+    filename:'PlanCore_Customers_Template.xlsx'
+  }
+};
+
+// ── Download Template ──
+function downloadTemplate(type){
+  if(typeof XLSX==='undefined'){alert('Excel library not loaded yet. Please wait a moment and try again.');return;}
+  const t=TEMPLATES[type];
+  const wsData=[t.cols,...t.sample];
+  const ws=XLSX.utils.aoa_to_sheet(wsData);
+  // Style header row width
+  ws['!cols']=t.cols.map(()=>({wch:22}));
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,type.charAt(0).toUpperCase()+type.slice(1));
+  XLSX.writeFile(wb,t.filename);
+}
+
+// ── Trigger upload ──
+function triggerXlsxUpload(type){
+  _xlsxTarget=type;
+  _xlsxParsed=null;
+  document.getElementById('xlsxFileInput').value='';
+  document.getElementById('xlsxFileInput').click();
+}
+
+// ── Handle file chosen ──
+function handleXlsxUpload(e){
+  const file=e.target.files[0];if(!file)return;
+  if(typeof XLSX==='undefined'){alert('Excel library not loaded yet.');return;}
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    try{
+      const data=new Uint8Array(ev.target.result);
+      const wb=XLSX.read(data,{type:'array'});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+      if(!rows.length){alert('No data found in file.');return;}
+      _xlsxParsed=rows;
+      showImportPreview(rows);
+    }catch(err){alert('Could not read file: '+err.message);}
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ── Show preview in modal ──
+function showImportPreview(rows){
+  const typeLabel={departments:'Departments',people:'People',customers:'Customers'}[_xlsxTarget];
+  const cols=Object.keys(rows[0]);
+  const preview=rows.slice(0,5);
+  let html=`<div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:6px">
+    Preview: <span style="color:var(--acc)">${rows.length} row${rows.length!==1?'s':''}</span> found in file for <strong>${typeLabel}</strong>
+  </div>
+  <div style="overflow-x:auto;border:1px solid var(--border);border-radius:var(--rs);font-size:11px">
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr style="background:var(--surf2)">${cols.map(c=>`<th style="padding:5px 8px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap">${c}</th>`).join('')}</tr></thead>
+      <tbody>${preview.map(r=>`<tr>${cols.map(c=>`<td style="padding:4px 8px;border-bottom:1px solid var(--border);white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis">${r[c]||''}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table>
+    ${rows.length>5?`<div style="padding:5px 8px;color:var(--t4);font-size:10px">…and ${rows.length-5} more rows</div>`:''}
+  </div>`;
+  document.getElementById('importPreview').innerHTML=html;
+  document.getElementById('importResult').textContent='';
+  document.getElementById('importModal').style.display='flex';
+}
+
+function closeImportModal(){document.getElementById('importModal').style.display='none';_xlsxParsed=null;_xlsxTarget=null;}
+
+// ── Confirm & execute import ──
+function confirmImport(){
+  if(!_xlsxParsed||!_xlsxTarget)return;
+  const mode=document.querySelector('input[name="importMode"]:checked').value;
+  let added=0,skipped=0;
+
+  if(_xlsxTarget==='departments'){
+    const newDepts=_xlsxParsed
+      .map(r=>String(r['Department Name']||r[Object.keys(r)[0]]||'').trim())
+      .filter(Boolean);
+    if(mode==='replace'){
+      depts=[...new Set(newDepts)];added=depts.length;
+    } else {
+      newDepts.forEach(d=>{
+        if(!depts.includes(d)){depts.push(d);added++;}
+        else skipped++;
+      });
+    }
+    logAction('import','departments',`${added} added`);
+    persist();renderDepts();
+
+  } else if(_xlsxTarget==='people'){
+    const newPeople=_xlsxParsed.map(r=>{
+      const name=String(r['Full Name']||r['Name']||r[Object.keys(r)[0]]||'').trim();
+      if(!name)return null;
+      const initials=String(r['Initials']||r['Initial']||'').trim()||
+        name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+      const role=String(r['Role']||r['Position']||r['Title']||'').trim();
+      const dept=String(r['Department']||r['Dept']||'').trim();
+      return{name,initials,role,dept};
+    }).filter(Boolean);
+
+    if(mode==='replace'){
+      people=newPeople.map(p=>({id:nPer++,...p}));
+      added=people.length;
+    } else {
+      newPeople.forEach(p=>{
+        const exists=people.find(x=>x.name.toLowerCase()===p.name.toLowerCase());
+        if(!exists){people.push({id:nPer++,...p});added++;}
+        else skipped++;
+      });
+    }
+    logAction('import','people',`${added} added`);
+    persist();renderTeam();updateStats();
+
+  } else if(_xlsxTarget==='customers'){
+    const statusMap={active:'active',lead:'lead',inactive:'inactive',
+      'Active':'active','Lead':'lead','Inactive':'inactive'};
+    const newCusts=_xlsxParsed.map(r=>{
+      const name=String(r['Company Name']||r['Company']||r['Name']||r[Object.keys(r)[0]]||'').trim();
+      if(!name)return null;
+      return{
+        name,
+        status:statusMap[r['Status']]||'active',
+        industry:String(r['Industry']||'').trim(),
+        contact:String(r['Contact Person']||r['Contact']||'').trim(),
+        email:String(r['Email']||'').trim(),
+        phone:String(r['Phone']||'').trim(),
+        notes:String(r['Notes']||'').trim(),
+        peopleIds:[]
+      };
+    }).filter(Boolean);
+
+    if(mode==='replace'){
+      customers=newCusts.map(c=>({id:nC++,...c}));
+      added=customers.length;
+    } else {
+      newCusts.forEach(c=>{
+        const exists=customers.find(x=>x.name.toLowerCase()===c.name.toLowerCase());
+        if(!exists){customers.push({id:nC++,...c});added++;}
+        else skipped++;
+      });
+    }
+    logAction('import','customers',`${added} added`);
+    persist();renderCustomers();updateStats();
+  }
+
+  // Show result
+  document.getElementById('importResult').textContent=
+    `✅ Done! ${added} added${skipped?`, ${skipped} skipped (duplicate)`:''}`;
+  document.getElementById('importConfirmBtn').textContent='Close';
+  document.getElementById('importConfirmBtn').onclick=closeImportModal;
+}
+
 // ══ CUSTOMERS ══
 let custFilter='all';
 let selectedCustId=null;
@@ -1875,7 +2058,7 @@ function deleteCustomer(id){
 // ══ CLOUD SYNC (jsonbin.io — free, no login) ══
 const JBIN_API = 'https://api.jsonbin.io/v3';
 // Free API key — rate limited but fine for personal use
-const JBIN_KEY = '$2a$10$placeholder'; // Will be auto-created on first push
+const JBIN_KEY = '$2a$10$WafE8cYWpGSs602RRnxAdeFnnuv6ULuwrbJZ8/Ckk6C3n6VQ3Fhju';
 
 function syncState(){return{tasks,events,projects,notes,people,depts,customers,dailyEntries,trash,auditLog,ids:{nT,nE,nP,nN,nPer,nD,nC},syncedAt:new Date().toISOString()};}
 
@@ -1899,7 +2082,7 @@ async function pushToCloud(){
       // Create new bin
       res=await fetch(JBIN_API+'/b',{
         method:'POST',
-        headers:{'Content-Type':'application/json','X-Bin-Private':'false'},
+        headers:{'Content-Type':'application/json','X-Master-Key':JBIN_KEY,'X-Bin-Private':'false'},
         body:JSON.stringify(data)
       });
       json=await res.json();
@@ -1915,7 +2098,7 @@ async function pushToCloud(){
       // Update existing bin
       res=await fetch(JBIN_API+'/b/'+binId,{
         method:'PUT',
-        headers:{'Content-Type':'application/json'},
+        headers:{'Content-Type':'application/json','X-Master-Key':JBIN_KEY},
         body:JSON.stringify(data)
       });
       json=await res.json();
@@ -1936,7 +2119,7 @@ async function pullFromCloud(){
   if(!binId){alert('No sync set up yet. Use Share / Sync first.');return;}
   setSyncDot('syncing');updateSyncInfo('Pulling…');
   try{
-    const res=await fetch(JBIN_API+'/b/'+binId+'/latest');
+    const res=await fetch(JBIN_API+'/b/'+binId+'/latest',{headers:{'X-Master-Key':JBIN_KEY}});
     const json=await res.json();
     if(!res.ok)throw new Error(json.message||'Pull failed');
     const d=json.record;
@@ -1957,7 +2140,7 @@ async function pullFromCloud(){
 async function pullById(binId){
   setSyncDot('syncing');updateSyncInfo('Connecting…');
   try{
-    const res=await fetch(JBIN_API+'/b/'+binId+'/latest');
+    const res=await fetch(JBIN_API+'/b/'+binId+'/latest',{headers:{'X-Master-Key':JBIN_KEY}});
     const json=await res.json();
     if(!res.ok)throw new Error(json.message||'Not found');
     const d=json.record;
@@ -2151,6 +2334,35 @@ init();
       <div id="cDelBtn" style="margin-right:auto;display:none"><button class="btn bd btn-sm" onclick="deleteCustomer(editingCustId)">Delete</button></div>
       <button class="btn bg btn-sm" onclick="closeCustModal()">Cancel</button>
       <button class="btn bp btn-sm" onclick="saveCustomer()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- EXCEL IMPORT MODAL -->
+<input type="file" id="xlsxFileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleXlsxUpload(event)">
+
+<div class="ov" id="importModal" style="display:none" onclick="if(event.target===this)closeImportModal()">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-handle"></div>
+    <div class="mt">📤 Import Excel</div>
+    <div id="importPreview" style="margin-bottom:14px"></div>
+    <div style="margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;color:var(--t2);margin-bottom:8px">Import mode:</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px;border-radius:var(--rs);border:1.5px solid var(--border);transition:border-color .15s" id="mergeOption">
+          <input type="radio" name="importMode" value="merge" checked style="margin-top:2px;flex-shrink:0">
+          <div><div style="font-size:13px;font-weight:600">Merge</div><div style="font-size:11px;color:var(--t3)">Add new entries, skip duplicates (by name)</div></div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px;border-radius:var(--rs);border:1.5px solid var(--border);transition:border-color .15s" id="replaceOption">
+          <input type="radio" name="importMode" value="replace" style="margin-top:2px;flex-shrink:0">
+          <div><div style="font-size:13px;font-weight:600">Replace</div><div style="font-size:11px;color:var(--t3)">Delete all existing data and replace with file contents</div></div>
+        </label>
+      </div>
+    </div>
+    <div id="importResult" style="font-size:12px;color:var(--grn);font-weight:600;min-height:20px"></div>
+    <div class="ma">
+      <button class="btn bg btn-sm" onclick="closeImportModal()">Cancel</button>
+      <button class="btn bp btn-sm" id="importConfirmBtn" onclick="confirmImport()">Import</button>
     </div>
   </div>
 </div>
